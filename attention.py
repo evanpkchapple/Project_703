@@ -64,7 +64,7 @@ class Decoder(Model):
         self.attention = BahdanauAttention(self.dec_units)
 
     def call(self, x, hidden, enc_output):
-        context_vector, attention_weights = self.attention(hidden, enc_output)
+        context_vector, attention_weights = self.attention(hidden[0], enc_output)
 
         x = self.embedding(x)
 
@@ -72,11 +72,11 @@ class Decoder(Model):
 
         output, hidden_state, cell_state = self.lstm(x)
 
-        output = tf.resjape(output, (-1, output.shape[2]))
+        output = tf.reshape(output, (-1, output.shape[2]))
 
         x = self.fc(output)
 
-        return x, state, attention_weights
+        return x, [hidden_state, cell_state], attention_weights
 
 ### LOADING DATA ###
 
