@@ -4,10 +4,14 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 ### IMPORTS ###
 
 import tensorflow as tf
+import numpy as np
 from tensorflow.keras.layers import LSTM, Embedding, Dense, Input
 from tensorflow.keras.models import Model
 from sklearn.model_selection import train_test_split
 import os
+import time
+import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
 
 ### ATTENTION LAYER ###
 
@@ -63,8 +67,8 @@ class Decoder(Model):
 
         self.attention = BahdanauAttention(self.dec_units)
 
-    def call(self, x, hidden, enc_output):
-        context_vector, attention_weights = self.attention(hidden[0], enc_output)
+    def call(self, x, hidden_states, enc_output):
+        context_vector, attention_weights = self.attention(hidden_states[0], enc_output)
 
         x = self.embedding(x)
 
@@ -121,6 +125,7 @@ steps_per_epoch = len(X_train)//BATCH_SIZE
 num_chars = len(all_chars)
 embedding_dim = 32
 units = 128
+EPOCHS = 30
 
 ### CREATE DATASET ###
 
@@ -158,7 +163,7 @@ sample_decoder_output, _, _ = decoder(tf.random.uniform((BATCH_SIZE, 1)),
 
 print ('Decoder output shape: (batch_size, vocab size) {}'.format(sample_decoder_output.shape))
 
-"""
+### LOSS & OPTIMIZER ###
 
 optimizer = tf.keras.optimizers.Adam()
 
@@ -177,24 +182,128 @@ def loss_function(real, pred):
 
 checkpoint_dir = './training_checkpoints'
 checkpoint_prefix = os.path.join(checkpoint_dir, "ckpt")
-checkpoint = tf.train.Checkpoint(optimizer=optimizer,
-                                 encoder=encoder,
-                                 decoder=decoder)
+checkpoint = tf.train.Checkpoint(optimizer=optimizer, encoder=encoder, decoder=decoder)
+
+### Training Function ###
 
 @tf.function
 def train_step(input, target, enc_hidden):
     loss = 0
 
     with tf.GradientTape() as tape:
-        enc_output, enc_hidden = encoder(input, enc_hidden)
+        enc_output, enc_states = encoder(input, enc_hidden)
         
-        dec_hidden = enc_hidden
+        dec_states = enc_states
 
-        dec_input = tf.expand_dims([targ_lang.word_index]) ###HERE
+        dec_input = tf.expand_dims([char_to_int['$']] * BATCH_SIZE, 1)
 
-model = Model([encoder_inputs, decoder_inputs], decoder_outputs)
+        for t in range(1, target.shape[1]):
+            predictions, dec_states, _ = decoder(dec_input, dec_states, enc_output)
+            
+            loss += loss_function(target[:, t], predictions)
 
-model.compile(optimizer='adam', loss=loss_function, metrics=['accuracy'])
+            dec_input = tf.expand_dims(target[:, t], 1)
+
+        batch_loss = (loss / int(target.shape[1]))
+
+        variables = encoder.trainable_variables + decoder.trainable_variables
+
+        gradients = tape.gradient(loss, variables)
+
+        optimizer.apply_gradients(zip(gradients, variables))
+
+        return batch_loss
+
+### Training LOOP ###
+
+for epoch in range(EPOCHS):
+    start = time.time()
+
+    enc_states = encoder.initialize_hidden_state()
+    total_loss = 0
+
+    for (batch, (input, target)) in enumerate(dataset.take(steps_per_epoch)):
+        batch_loss = train_step(input, target, enc_states)
+
+        total_loss += batch_loss
+
+        if batch % 20 == 0:
+            print('Epoch {} Batch {} Loss {:.4f}'.format(epoch+1, batch, batch_loss.numpy()))
+    if (epoch+1) % 2 == 0:
+        checkpoint.save(file_prefix = checkpoint_prefix)
+
+    print('Epoch {} Loss {:.4f}'.format(epoch+1, total_loss/steps_per_epoch))
+
+    print('Time taken for 1 epoch {} sec\n'.format(time.time()-start))
+
+### EVALUATE ###
+
+def evaluate(word):
+    attention_plot = np.zeros((max_len, max_len))
+
+    word = "$" + word + "#"
+
+    input = word_to_int_seq(word)
+
+    input = tf.keras.preprocessing.sequence.pad_sequences(X, maxlen=max_len, padding='post', value=char_to_int[' '])
+
+    inputs = tf.convert_to_tensor(input)
+
+    result = ''
+
+    hidden_state = [tf.zeros((1, units)) for _ in range(2)]
+
+    enc_out, enc_hidden = encoder(inputs, hidden_state)
+
+    dec_hidden = enc_hidden
+    dec_input = tf.expand_dims([char_to_int['$']], 0)
+
+    for t in range(max_len):
+        predictions, dec_states, attention_weights = decoder(dec_input, dec_hidden, enc_out)
+
+        attention_weights = tf.reshape(attention_weights, (-1, ))
+        attention_plot[t] = attention_weights.numpy()
+
+        predicted_id = tf.argmax(predictions[0]).numpy() #doesn't do much
+
+        result += int_to_char[predicted_id]
+
+        if int_to_char[predicted_id] == "#":
+            return result, word, attention_plot
+            
+        dec_input = tf.expand_dims([predicted_id], 0)
+
+    return result, word, attention_plot
+
+def plot_attention(attention, word, predicted_word):
+    fig = plt.figure(figsize=(10,10))
+    ax = fig.add_subplot(1, 1, 1)
+    ax.matshow(attention, cmap='viridis')
+
+    fontdict = {'fontsize': 14}
+
+    ax.set_xticklabels([''] + word, fontdict=fontdict, rotation=90)
+    ax.set_yticklabels([''] + predicted_word, fontdict=fontdict)
+
+    ax.xaxis.set_major_locator(ticker.MultipleLocator(1))
+    ax.yaxis.set_major_locator(ticker.MultipleLocator(1))
+
+    plt.show()
+
+def translate(word):
+    result, word, attention_plot = evaluate(word)
+
+    print('Input: %s' % (word))
+    print('Predicted translation: {}'.format(result))
+
+    attention_plot = attention_plot[:len(*result), :len(*word)]
+    plot_attention(attention_plot, *word, *result)
+
+checkpoint.restore(tf.train.latest_checkpoint(checkpoint_dir))
+
+translate("kulinaɾjas")
+
+"""
 
 def plot_attention(attention, input_word, predicted_word):
     attn = np.squeeze(attention, axis=-1)
