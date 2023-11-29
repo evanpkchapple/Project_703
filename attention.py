@@ -99,6 +99,7 @@ print('Length of training data: ', len(source_words))
 
 all_chars = set(''.join(source_words) + ''.join(target_words) + ' ')
 char_to_int = {c: i for i, c in enumerate(all_chars)}
+int_to_char = {i: c for c, i in char_to_int.items()}
 
 max_len_source = max(len(word) for word in source_words)
 
@@ -120,12 +121,12 @@ X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.2, random_
 ### HYPER PARAMETER DEFINITION ###
 
 BUFFER_SIZE = len(X_train)
-BATCH_SIZE = 32
+BATCH_SIZE = 64
 steps_per_epoch = len(X_train)//BATCH_SIZE
 num_chars = len(all_chars)
-embedding_dim = 32
-units = 128
-EPOCHS = 30
+embedding_dim = 256
+units = 1024
+EPOCHS = 15
 
 ### CREATE DATASET ###
 
@@ -243,9 +244,13 @@ def evaluate(word):
 
     word = "$" + word + "#"
 
-    input = word_to_int_seq(word)
+    print(word)
 
-    input = tf.keras.preprocessing.sequence.pad_sequences(X, maxlen=max_len, padding='post', value=char_to_int[' '])
+    input_seq = word_to_int_seq(word)
+
+    print(input_seq)
+
+    input = tf.keras.preprocessing.sequence.pad_sequences([input_seq], maxlen=max_len, padding='post', value=char_to_int[' '])
 
     inputs = tf.convert_to_tensor(input)
 
@@ -296,24 +301,9 @@ def translate(word):
     print('Input: %s' % (word))
     print('Predicted translation: {}'.format(result))
 
-    attention_plot = attention_plot[:len(*result), :len(*word)]
-    plot_attention(attention_plot, *word, *result)
+    attention_plot = attention_plot[:len([*result]), :len([*word])]
+    plot_attention(attention_plot, [*word], [*result])
 
 checkpoint.restore(tf.train.latest_checkpoint(checkpoint_dir))
 
 translate("kulinaɾjas")
-
-"""
-
-def plot_attention(attention, input_word, predicted_word):
-    attn = np.squeeze(attention, axis=-1)
-    fig, ax = plt.subplots()
-    sns.heatmap(attn, xticklabels=input_word, yticklabels=predicted_word, ax=ax)
-    ax.set_title('Attention Weights')
-    plt.show()
-
-input_word = 'input_ipa_word'
-predicted_word = 'predicted_ipa_word'
-attention_weights = ... # Extract attention weights from the model after prediction
-plot_attention(attention_weights, input_word, predicted_word)
-"""
